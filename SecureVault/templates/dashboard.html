@@ -1,1 +1,192 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureVault Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background:#fff8dc; color:#2b2b2b; font-family:'Segoe UI',sans-serif; }
+        .navbar-amber { background:#ffc107; border-bottom:3px solid #e6a800; }
+        .card { border-radius:12px; border:1px solid #f0d980; box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+        .btn-amber { background:#ffc107; color:#222; font-weight:bold; }
+        .btn-amber:hover { background:#e6a800; }
+        .mono { font-family: Consolas, monospace; font-size: 0.8rem; word-break: break-all; }
+        .nav-tabs .nav-link.active { background-color: #fff; border-color: #f0d980 #f0d980 #fff; border-top: 3px solid #ffc107; font-weight: bold; }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-amber px-4 mb-4">
+    <div class="container-fluid">
+        <a class="navbar-brand fw-bold" href="#">🔐 SecureVault Online E2EE</a>
+        <div class="d-flex align-items-center gap-3">
+            <span class="badge bg-light text-dark px-3 py-2 border">Pengguna: <strong>{{ session['username'] }}</strong></span>
+            <a href="/logout" class="btn btn-outline-dark btn-sm">Keluar</a>
+        </div>
+    </div>
+</nav>
 
+<div class="container" style="max-width: 960px;">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}{% for cat, msg in messages %}
+        <div class="alert alert-{{cat}} alert-dismissible fade show" role="alert">
+            {{msg}}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}{% endif %}
+    {% endwith %}
+
+    <ul class="nav nav-tabs mb-3" id="mainTab">
+        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-send">✉️ Kirim Pesan E2EE</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-inbox">📥 Pesan Masuk (Inbox) <span class="badge bg-danger">{{ inbox|length }}</span></button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-outbox">📤 Riwayat Terkirim</button></li>
+    </ul>
+
+    <div class="tab-content">
+        <!-- TAB KIRIM -->
+        <div class="tab-pane fade show active" id="tab-send">
+            <div class="card p-4">
+                <h5 class="fw-bold mb-3">Enkripsi & Kirim Pesan</h5>
+                <form action="/send" method="POST">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Penerima Pesan</label>
+                        <select name="receiver_id" class="form-select" required>
+                            <option value="" disabled selected>-- Pilih Penerima --</option>
+                            {% for u in users %}
+                                <option value="{{ u.id }}">{{ u.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Isi Pesan Rahasia</label>
+                        <textarea name="message" class="form-control" rows="3" placeholder="Ketik pesan rahasia..." required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Password Enkripsi AES-256</label>
+                        <input type="password" name="password" class="form-control" placeholder="Kunci rahasia dekripsi" required>
+                    </div>
+                    <button type="submit" class="btn btn-amber px-4 py-2">Sign & Encrypt Send</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- TAB INBOX -->
+        <div class="tab-pane fade" id="tab-inbox">
+            <div class="card p-4">
+                <h5 class="fw-bold mb-3">Kotak Masuk Terenkripsi</h5>
+                {% if not inbox %}
+                    <p class="text-muted">Belum ada pesan masuk.</p>
+                {% else %}
+                    <div class="accordion" id="accordionInbox">
+                    {% for m in inbox %}
+                        <div class="accordion-item mb-2 border">
+                            <h2 class="accordion-header" id="heading{{m.id}}">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{m.id}}">
+                                    <span>Dari: <strong>{{ m.sender_name }}</strong> <small class="text-muted ms-2">({{ m.timestamp }})</small></span>
+                                </button>
+                            </h2>
+                            <div id="collapse{{m.id}}" class="accordion-collapse collapse" data-bs-parent="#accordionInbox">
+                                <div class="accordion-body">
+                                    <div class="mb-2">
+                                        <small class="text-muted d-block">Ciphertext AES-GCM:</small>
+                                        <div class="mono bg-light p-2 border rounded">{{ m.ciphertext }}</div>
+                                    </div>
+                                    <div class="row g-2 mb-3 small">
+                                        <div class="col-md-6">Salt: <span class="mono">{{ m.salt }}</span></div>
+                                        <div class="col-md-6">IV: <span class="mono">{{ m.iv }}</span></div>
+                                        <div class="col-md-6">Dissanayake Signature (S): <span class="mono">{{ m.signature[:30] }}...</span></div>
+                                        <div class="col-md-6">Dissanayake (r): <span class="mono">{{ m.r_val }}</span></div>
+                                    </div>
+                                    
+                                    <div class="input-group mb-2">
+                                        <input type="password" id="pwd-{{m.id}}" class="form-control" placeholder="Masukkan password dekripsi">
+                                        <button class="btn btn-dark" onclick="decryptMsg({{m.id}})">Decrypt & Verify</button>
+                                    </div>
+
+                                    <div id="res-{{m.id}}" class="mt-3 p-3 border rounded d-none">
+                                        <div class="mb-2">
+                                            <span id="badge-gcm-{{m.id}}" class="badge me-1"></span>
+                                            <span id="badge-sig-{{m.id}}" class="badge"></span>
+                                        </div>
+                                        <strong>Hasil Pesan:</strong>
+                                        <div id="out-{{m.id}}" class="p-2 bg-light border rounded mt-1 white-space-pre"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- TAB OUTBOX -->
+        <div class="tab-pane fade" id="tab-outbox">
+            <div class="card p-4">
+                <h5 class="fw-bold mb-3">Riwayat Pesan Terkirim</h5>
+                {% if not outbox %}
+                    <p class="text-muted">Belum ada pesan terkirim.</p>
+                {% else %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Kepada</th>
+                                    <th>Waktu</th>
+                                    <th>Ciphertext Snippet</th>
+                                    <th>Signature (S)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for o in outbox %}
+                                <tr>
+                                    <td><strong>{{ o.receiver_name }}</strong></td>
+                                    <td><small>{{ o.timestamp }}</small></td>
+                                    <td><span class="mono">{{ o.ciphertext[:24] }}...</span></td>
+                                    <td><span class="mono">{{ o.signature[:20] }}...</span></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+async function decryptMsg(msgId) {
+    const pwdInput = document.getElementById('pwd-' + msgId);
+    const resBox = document.getElementById('res-' + msgId);
+    const badgeGcm = document.getElementById('badge-gcm-' + msgId);
+    const badgeSig = document.getElementById('badge-sig-' + msgId);
+    const outBox = document.getElementById('out-' + msgId);
+
+    if (!pwdInput.value) return alert('Masukkan password terlebih dahulu.');
+
+    const resp = await fetch('/decrypt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg_id: msgId, password: pwdInput.value })
+    });
+    const data = await resp.json();
+
+    resBox.classList.remove('d-none');
+    if (data.success) {
+        badgeGcm.className = 'badge bg-success';
+        badgeGcm.textContent = 'Data Autentik AES-GCM ✔';
+        badgeSig.className = data.valid_sig ? 'badge bg-success' : 'badge bg-danger';
+        badgeSig.textContent = data.valid_sig ? 'Tanda Tangan Dissanayake Valid ✔' : 'Tanda Tangan Tidak Valid ✘';
+        outBox.textContent = data.plaintext;
+    } else {
+        badgeGcm.className = 'badge bg-danger';
+        badgeGcm.textContent = 'Dekripsi Gagal ✘';
+        badgeSig.className = 'badge bg-secondary';
+        badgeSig.textContent = data.error;
+        outBox.textContent = '—';
+    }
+}
+</script>
+</body>
+                              </html>
